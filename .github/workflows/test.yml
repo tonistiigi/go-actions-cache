@@ -1,0 +1,22 @@
+name: test
+on:
+  push:
+    branches:
+      - master
+      - cachetest
+
+jobs:
+  run:
+    name: Run
+    runs-on: ubuntu-20.04 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Test
+        uses: ./test_action 
+
+    # - name: Setup go
+    #   uses: actions/setup-go@v2
+
+    # - name: Test
+    #   run: env && ls -l $RUNNER_WORKSPACE && cat $GITHUB_ENV && go test -v .
