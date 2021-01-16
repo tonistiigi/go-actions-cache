@@ -4,19 +4,25 @@ on:
     branches:
       - master
       - cachetest
+  pull_request:
 
 jobs:
-  run:
-    name: Run
-    runs-on: ubuntu-20.04 
+  docker:
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout
         uses: actions/checkout@v2
       - name: Test
         uses: ./test_action 
 
-    # - name: Setup go
-    #   uses: actions/setup-go@v2
-
-    # - name: Test
-    #   run: env && ls -l $RUNNER_WORKSPACE && cat $GITHUB_ENV && go test -v .
+  inline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup go
+        uses: actions/setup-go@v2
+      - name: Expose GitHub Runtime
+        uses: crazy-max/ghaction-github-runtime@v1
+      - name: Test
+        run: go test -v .
