@@ -144,14 +144,14 @@ func (c *Cache) Load(ctx context.Context, keys ...string) (*Entry, error) {
 	return &ce, nil
 }
 
-func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64) error {
+func (c *Cache) reserve(ctx context.Context, key string) (int, error) {
 	dt, err := json.Marshal(ReserveCacheReq{Key: key, Version: version(key)})
 	if err != nil {
-		return errors.WithStack(err)
+		return 0, errors.WithStack(err)
 	}
 	req, err := http.NewRequest("POST", c.url("caches"), bytes.NewReader(dt))
 	if err != nil {
-		return errors.WithStack(err)
+		return 0, errors.WithStack(err)
 	}
 	c.auth(req)
 	c.accept(req)
@@ -160,24 +160,58 @@ func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64
 	Log("save cache req %s body=%s", req.URL.String(), dt)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return errors.WithStack(err)
+		return 0, errors.WithStack(err)
 	}
 
 	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
 	if err != nil {
-		return errors.WithStack(err)
+		return 0, errors.WithStack(err)
 	}
 	var cr ReserveCacheResp
 	if err := json.Unmarshal(dt, &cr); err != nil {
-		return errors.Wrapf(err, "failed to unmarshal %s", dt)
+		return 0, errors.Wrapf(err, "failed to unmarshal %s", dt)
 	}
 	if cr.CacheID == 0 {
 		if err := detectError(dt); err != nil {
-			return err
+			return 0, err
 		}
+		return 0, errors.Errorf("invalid response %s", dt)
 	}
 	Log("save cache resp: %s", dt)
+	return cr.CacheID, nil
+}
 
+func (c *Cache) commit(ctx context.Context, id int, size int64) error {
+	dt, err := json.Marshal(CommitCacheReq{Size: size})
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	req, err := http.NewRequest("POST", c.url(fmt.Sprintf("caches/%d", id)), bytes.NewReader(dt))
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	c.auth(req)
+	c.accept(req)
+	req.Header.Set("Content-Type", "application/json")
+	Log("commit cache %s, size %d", req.URL.String(), size)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return errors.Wrapf(err, "error committing cache %d", id)
+	}
+	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	if err != nil {
+		return err
+	}
+	if err := detectError(dt); err != nil {
+		return err
+	}
+	if len(dt) != 0 {
+		Log("commit response: %s", dt)
+	}
+	return resp.Body.Close()
+}
+
+func (c *Cache) upload(ctx context.Context, id int, ra io.ReaderAt, size int64) error {
 	var mu sync.Mutex
 	eg, ctx := errgroup.WithContext(ctx)
 	offset := int64(0)
@@ -197,44 +231,26 @@ func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64
 				offset = end
 				mu.Unlock()
 
-				if err := c.uploadChunk(ctx, cr.CacheID, ra, start, end-start); err != nil {
+				if err := c.uploadChunk(ctx, id, ra, start, end-start); err != nil {
 					return err
 				}
 			}
 		})
 	}
+	return eg.Wait()
+}
 
-	if err := eg.Wait(); err != nil {
+func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64) error {
+	id, err := c.reserve(ctx, key)
+	if err != nil {
 		return err
 	}
 
-	dt, err = json.Marshal(CommitCacheReq{Size: size})
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	req, err = http.NewRequest("POST", c.url(fmt.Sprintf("caches/%d", cr.CacheID)), bytes.NewReader(dt))
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	c.auth(req)
-	c.accept(req)
-	req.Header.Set("Content-Type", "application/json")
-	Log("commit cache %s, size %d", req.URL.String(), size)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		return errors.Wrapf(err, "error committing cache %d", cr.CacheID)
-	}
-	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
-	if err != nil {
+	if err := c.upload(ctx, id, ra, size); err != nil {
 		return err
 	}
-	if err := detectError(dt); err != nil {
-		return err
-	}
-	if len(dt) != 0 {
-		Log("commit response: %s", dt)
-	}
-	return resp.Body.Close()
+
+	return c.commit(ctx, id, size)
 }
 
 func (c *Cache) uploadChunk(ctx context.Context, id int, ra io.ReaderAt, off, n int64) error {
