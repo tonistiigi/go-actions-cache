@@ -183,20 +183,24 @@ func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64
 	offset := int64(0)
 	for i := 0; i < UploadConcurrency; i++ {
 		eg.Go(func() error {
-			mu.Lock()
-			start := offset
-			if start >= size {
+			for {
+				mu.Lock()
+				start := offset
+				if start >= size {
+					mu.Unlock()
+					return nil
+				}
+				end := start + int64(UploadChunkSize)
+				if end > size {
+					end = size
+				}
+				offset = end
 				mu.Unlock()
-				return nil
-			}
-			end := start + int64(UploadChunkSize)
-			if end > size {
-				end = size
-			}
-			offset = end
-			mu.Unlock()
 
-			return c.uploadChunk(ctx, cr.CacheID, ra, start, end-start)
+				if err := c.uploadChunk(ctx, cr.CacheID, ra, start, end-start); err != nil {
+					return err
+				}
+			}
 		})
 	}
 

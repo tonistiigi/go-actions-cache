@@ -91,3 +91,32 @@ func TestExistingKey(t *testing.T) {
 	require.True(t, errors.As(err, &gae))
 	require.Equal(t, "ArtifactCacheItemAlreadyExistsException", gae.TypeKey)
 }
+
+func TestChunkedSave(t *testing.T) {
+	ctx := context.TODO()
+
+	c, err := TryEnv()
+	require.NoError(t, err)
+	if c == nil {
+		t.SkipNow()
+	}
+	oldChunkSize := UploadChunkSize
+	UploadChunkSize = 2
+
+	id := identity.NewID()
+	dt := []byte("0123456789")
+	err = c.Save(ctx, id, bytes.NewReader(dt), int64(len(dt)))
+	require.NoError(t, err)
+
+	UploadChunkSize = oldChunkSize
+
+	ce, err := c.Load(ctx, id)
+	require.NoError(t, err)
+	require.NotNil(t, ce)
+
+	buf := &bytes.Buffer{}
+	err = ce.Download(ctx, buf)
+	require.NoError(t, err)
+
+	require.Equal(t, "0123456789", buf.String())
+}
