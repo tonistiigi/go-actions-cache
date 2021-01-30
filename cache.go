@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
@@ -124,10 +125,20 @@ func (c *Cache) Load(ctx context.Context, keys ...string) (*Entry, error) {
 		return nil, errors.WithStack(err)
 	}
 	var ce Entry
-	if err := json.NewDecoder(resp.Body).Decode(&ce); err != nil && !errors.Is(err, io.EOF) {
+	dt, err := ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if len(dt) == 0 {
+		return nil, nil
+	}
+	if err := json.Unmarshal(dt, &ce); err != nil {
 		return nil, errors.WithStack(err)
 	}
 	if ce.Key == "" {
+		if err := detectError(dt); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 	return &ce, nil
@@ -146,18 +157,26 @@ func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64
 	c.accept(req)
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
-	Log("save cache %s", req.URL.String())
-	Log("body: %s", dt)
+	Log("save cache req %s body=%s", req.URL.String(), dt)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	dec := json.NewDecoder(resp.Body)
-	var cr ReserveCacheResp
-	if err := dec.Decode(&cr); err != nil {
-		io.Copy(os.Stderr, dec.Buffered())
+
+	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	if err != nil {
 		return errors.WithStack(err)
 	}
+	var cr ReserveCacheResp
+	if err := json.Unmarshal(dt, &cr); err != nil {
+		return errors.Wrapf(err, "failed to unmarshal %s", dt)
+	}
+	if cr.CacheID == 0 {
+		if err := detectError(dt); err != nil {
+			return err
+		}
+	}
+	Log("save cache resp: %s", dt)
 
 	var mu sync.Mutex
 	eg, ctx := errgroup.WithContext(ctx)
@@ -201,7 +220,16 @@ func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64
 	if err != nil {
 		return errors.Wrapf(err, "error committing cache %d", cr.CacheID)
 	}
-	io.Copy(os.Stderr, resp.Body)
+	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	if err != nil {
+		return err
+	}
+	if err := detectError(dt); err != nil {
+		return err
+	}
+	if len(dt) != 0 {
+		Log("commit response: %s", dt)
+	}
 	return resp.Body.Close()
 }
 
@@ -221,9 +249,15 @@ func (c *Cache) uploadChunk(ctx context.Context, id int, ra io.ReaderAt, off, n 
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	_, err = io.Copy(os.Stderr, resp.Body)
+	dt, err := ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
 	if err != nil {
 		return errors.WithStack(err)
+	}
+	if err := detectError(dt); err != nil {
+		return errors.WithStack(err)
+	}
+	if len(dt) != 0 {
+		Log("upload chunk resp: %s", dt)
 	}
 	return resp.Body.Close()
 }
@@ -279,4 +313,27 @@ func version(k string) string {
 	// upstream uses paths in version, we don't seem to have anything that is unique like this
 	h.Write([]byte("|go-actionscache-1.0"))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+type GithubAPIError struct {
+	Message   string `json:"message"`
+	TypeName  string `json:"typeName"`
+	TypeKey   string `json:"typeKey"`
+	ErrorCode int    `json:"errorCode"`
+}
+
+func (e GithubAPIError) Error() string {
+	return e.Message
+}
+
+func detectError(dt []byte) error {
+	if len(dt) == 0 {
+		return nil
+	}
+	var err GithubAPIError
+	_ = json.Unmarshal(dt, &err)
+	if err.Message != "" {
+		return errors.WithStack(err)
+	}
+	return nil
 }

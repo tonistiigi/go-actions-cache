@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/moby/buildkit/identity"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,4 +68,26 @@ func TestSaveLoad(t *testing.T) {
 	err = ce.Download(ctx, buf)
 	require.NoError(t, err)
 	require.Equal(t, "foobar", buf.String())
+}
+
+func TestExistingKey(t *testing.T) {
+	key := "go-actions-cache-key1"
+	ctx := context.TODO()
+
+	c, err := TryEnv()
+	require.NoError(t, err)
+	if c == nil {
+		t.SkipNow()
+	}
+
+	dt := []byte("foo1")
+	// may fail because already exists from previous run
+	c.Save(ctx, key, bytes.NewReader(dt), int64(len(dt)))
+
+	dt = []byte("foo2")
+	err = c.Save(ctx, key, bytes.NewReader(dt), int64(len(dt)))
+	require.Error(t, err)
+	var gae GithubAPIError
+	require.True(t, errors.As(err, &gae))
+	require.Equal(t, "ArtifactCacheItemAlreadyExistsException", gae.TypeKey)
 }
