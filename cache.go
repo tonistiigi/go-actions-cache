@@ -28,6 +28,32 @@ var noValidateToken bool
 
 var Log = func(string, ...interface{}) {}
 
+type Blob interface {
+	io.ReaderAt
+	io.Closer
+	Size() int64
+}
+
+type bufferBlob struct {
+	io.ReaderAt
+	size int64
+}
+
+func (b *bufferBlob) Size() int64 {
+	return b.size
+}
+
+func (b *bufferBlob) Close() error {
+	return nil
+}
+
+func NewBlob(dt []byte) Blob {
+	return &bufferBlob{
+		ReaderAt: bytes.NewReader(dt),
+		size:     int64(len(dt)),
+	}
+}
+
 func TryEnv() (*Cache, error) {
 	tokenEnc, ok := os.LookupEnv("GHCACHE_TOKEN_ENC")
 	if ok {
@@ -255,7 +281,7 @@ func (c *Cache) commit(ctx context.Context, id int, size int64) error {
 	return resp.Body.Close()
 }
 
-func (c *Cache) upload(ctx context.Context, id int, ra io.ReaderAt, size int64) error {
+func (c *Cache) upload(ctx context.Context, id int, b Blob) error {
 	var mu sync.Mutex
 	eg, ctx := errgroup.WithContext(ctx)
 	offset := int64(0)
@@ -264,18 +290,18 @@ func (c *Cache) upload(ctx context.Context, id int, ra io.ReaderAt, size int64) 
 			for {
 				mu.Lock()
 				start := offset
-				if start >= size {
+				if start >= b.Size() {
 					mu.Unlock()
 					return nil
 				}
 				end := start + int64(UploadChunkSize)
-				if end > size {
-					end = size
+				if end > b.Size() {
+					end = b.Size()
 				}
 				offset = end
 				mu.Unlock()
 
-				if err := c.uploadChunk(ctx, id, ra, start, end-start); err != nil {
+				if err := c.uploadChunk(ctx, id, b, start, end-start); err != nil {
 					return err
 				}
 			}
@@ -284,17 +310,83 @@ func (c *Cache) upload(ctx context.Context, id int, ra io.ReaderAt, size int64) 
 	return eg.Wait()
 }
 
-func (c *Cache) Save(ctx context.Context, key string, ra io.ReaderAt, size int64) error {
+func (c *Cache) Save(ctx context.Context, key string, b Blob) error {
 	id, err := c.reserve(ctx, key)
 	if err != nil {
 		return err
 	}
 
-	if err := c.upload(ctx, id, ra, size); err != nil {
+	if err := c.upload(ctx, id, b); err != nil {
 		return err
 	}
 
-	return c.commit(ctx, id, size)
+	return c.commit(ctx, id, b.Size())
+}
+
+// SaveMutable stores a blob over a possibly existing key. Previous value is passed to callback
+// that needs to return new blob. Callback may be called multiple times if two saves happen during
+// same time window. In case of a crash a key may remain locked, preventing previous changes. Timeout
+// can be set to force changes in this case without guaranteeing that previous value was up to date.
+func (c *Cache) SaveMutable(ctx context.Context, key string, forceTimeout time.Duration, f func(old *Entry) (Blob, error)) error {
+	var blocked time.Duration
+loop0:
+	for {
+		ce, err := c.Load(ctx, key+"#")
+		if err != nil {
+			return err
+		}
+		b, err := f(ce)
+		if err != nil {
+			return err
+		}
+		defer b.Close()
+		if ce != nil {
+			// check if index changed while loading
+			ce2, err := c.Load(ctx, key+"#")
+			if err != nil {
+				return err
+			}
+			if ce2 == nil || ce2.Key != ce.Key {
+				continue
+			}
+		}
+		idx := 0
+		if ce != nil {
+			idxs := strings.TrimPrefix(ce.Key, key+"#")
+			if idxs == "" {
+				return errors.Errorf("corrupt empty index for %s", key)
+			}
+			idx, err = strconv.Atoi(idxs)
+			if err != nil {
+				return errors.Wrapf(err, "failed to parse %s index", key)
+			}
+		}
+		var cacheID int
+		for {
+			idx++
+			cacheID, err = c.reserve(ctx, fmt.Sprintf("%s#%d", key, idx))
+			if err != nil {
+				if errors.Is(err, os.ErrExist) {
+					if blocked <= forceTimeout {
+						blocked += 2 * time.Second
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-time.After(2 * time.Second):
+						}
+						continue loop0
+					}
+					continue // index has been blocked a long time, maybe crashed, skip to next number
+				}
+				return err
+			}
+			break
+		}
+		if err := c.upload(ctx, cacheID, b); err != nil {
+			return nil
+		}
+		return c.commit(ctx, cacheID, b.Size())
+	}
 }
 
 func (c *Cache) uploadChunk(ctx context.Context, id int, ra io.ReaderAt, off, n int64) error {
@@ -388,6 +480,19 @@ type GithubAPIError struct {
 
 func (e GithubAPIError) Error() string {
 	return e.Message
+}
+
+func (e GithubAPIError) Is(err error) bool {
+	if err == os.ErrExist {
+		if strings.Contains(e.TypeKey, "AlreadExists") {
+			return true
+		}
+		// for safety, in case error gets updated
+		if strings.Contains(strings.ToLower(e.Message), "already exists") {
+			return true
+		}
+	}
+	return false
 }
 
 func checkResponse(resp *http.Response) error {

@@ -3,8 +3,11 @@ package actionscache
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/moby/buildkit/identity"
 	"github.com/pkg/errors"
@@ -49,8 +52,7 @@ func TestSaveLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, ce)
 
-	dt := []byte("foobar")
-	err = c.Save(ctx, key, bytes.NewReader(dt), int64(len(dt)))
+	err = c.Save(ctx, key, NewBlob([]byte("foobar")))
 	require.NoError(t, err)
 
 	ce, err = c.Load(ctx, key)
@@ -84,16 +86,15 @@ func TestExistingKey(t *testing.T) {
 		t.SkipNow()
 	}
 
-	dt := []byte("foo1")
 	// may fail because already exists from previous run
-	c.Save(ctx, key, bytes.NewReader(dt), int64(len(dt)))
+	c.Save(ctx, key, NewBlob([]byte("foo1")))
 
-	dt = []byte("foo2")
-	err = c.Save(ctx, key, bytes.NewReader(dt), int64(len(dt)))
+	err = c.Save(ctx, key, NewBlob([]byte("foo2")))
 	require.Error(t, err)
 	var gae GithubAPIError
 	require.True(t, errors.As(err, &gae), "error was %+v", err)
 	require.Equal(t, "ArtifactCacheItemAlreadyExistsException", gae.TypeKey)
+	require.True(t, errors.Is(err, os.ErrExist))
 }
 
 func TestChunkedSave(t *testing.T) {
@@ -108,8 +109,7 @@ func TestChunkedSave(t *testing.T) {
 	UploadChunkSize = 2
 
 	id := identity.NewID()
-	dt := []byte("0123456789")
-	err = c.Save(ctx, id, bytes.NewReader(dt), int64(len(dt)))
+	err = c.Save(ctx, id, NewBlob([]byte("0123456789")))
 	require.NoError(t, err)
 
 	UploadChunkSize = oldChunkSize
@@ -146,17 +146,17 @@ func TestPartialKeyOrder(t *testing.T) {
 
 	key1 := "partial-" + rand + "foo22"
 	dt := []byte("foo2")
-	err = c.Save(ctx, key1, bytes.NewReader(dt), int64(len(dt)))
+	err = c.Save(ctx, key1, NewBlob(dt))
 	require.NoError(t, err)
 
 	key2 := "partial-" + rand + "fo"
 	dt = []byte("fo")
-	err = c.Save(ctx, key2, bytes.NewReader(dt), int64(len(dt)))
+	err = c.Save(ctx, key2, NewBlob(dt))
 	require.NoError(t, err)
 
 	key3 := "partial-" + rand + "foo1"
 	dt = []byte("foo2")
-	err = c.Save(ctx, key3, bytes.NewReader(dt), int64(len(dt)))
+	err = c.Save(ctx, key3, NewBlob(dt))
 	require.NoError(t, err)
 
 	ce, err := c.Load(ctx, "partial-"+rand+"foo")
@@ -174,5 +174,129 @@ func TestPartialKeyOrder(t *testing.T) {
 	ce, err = c.Load(ctx, "partial-"+rand+"foo2")
 	require.NoError(t, err)
 	require.Equal(t, "partial-"+rand+"foo22", ce.Key)
+}
 
+func TestMutable(t *testing.T) {
+	ctx := context.TODO()
+
+	c, err := TryEnv()
+	require.NoError(t, err)
+	if c == nil {
+		t.SkipNow()
+	}
+
+	key := "mutable-" + identity.NewID()
+
+	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
+		require.Nil(t, ce)
+		return NewBlob([]byte("abc")), nil
+	})
+	require.NoError(t, err)
+
+	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
+		require.NotNil(t, ce)
+		require.Equal(t, fmt.Sprintf("%s#%d", key, 1), ce.Key)
+		buf := &bytes.Buffer{}
+		err := ce.Download(ctx, buf)
+		require.NoError(t, err)
+		return NewBlob(append(buf.Bytes(), []byte("def")...)), nil
+	})
+	require.NoError(t, err)
+
+	ce, err := c.Load(ctx, key)
+	require.NoError(t, err)
+	require.NotNil(t, ce)
+
+	buf := &bytes.Buffer{}
+	err = ce.Download(ctx, buf)
+	require.NoError(t, err)
+
+	require.Equal(t, "abcdef", buf.String())
+}
+
+func TestMutableRace(t *testing.T) {
+	ctx := context.TODO()
+
+	c, err := TryEnv()
+	require.NoError(t, err)
+	if c == nil {
+		t.SkipNow()
+	}
+
+	key := "mutable-race-" + identity.NewID()
+
+	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
+		require.Nil(t, ce)
+		return NewBlob([]byte("123")), nil
+	})
+	require.NoError(t, err)
+
+	addAnother := func() {
+		err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
+			require.NotNil(t, ce)
+			buf := &bytes.Buffer{}
+			err := ce.Download(ctx, buf)
+			require.NoError(t, err)
+			return NewBlob(append(buf.Bytes(), []byte("456")...)), nil
+		})
+		require.NoError(t, err)
+	}
+
+	count := 0
+	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
+		require.NotNil(t, ce)
+		buf := &bytes.Buffer{}
+		err := ce.Download(ctx, buf)
+		require.NoError(t, err)
+		if count == 0 {
+			require.Equal(t, fmt.Sprintf("%s#%d", key, 1), ce.Key)
+			addAnother()
+		} else {
+			require.NotEqual(t, fmt.Sprintf("%s#%d", key, 1), ce.Key)
+		}
+		count++
+		return NewBlob(append(buf.Bytes(), []byte("789")...)), nil
+	})
+	require.NoError(t, err)
+
+	ce, err := c.Load(ctx, key)
+	require.NoError(t, err)
+	require.NotNil(t, ce)
+
+	buf := &bytes.Buffer{}
+	err = ce.Download(ctx, buf)
+	require.NoError(t, err)
+
+	require.Equal(t, "123456789", buf.String())
+}
+
+func TestMutableCrash(t *testing.T) {
+	ctx := context.TODO()
+
+	c, err := TryEnv()
+	require.NoError(t, err)
+	if c == nil {
+		t.SkipNow()
+	}
+
+	key := "mutable-race-" + identity.NewID()
+
+	// reserve key but don't do anything, as if crashed
+	_, err = c.reserve(ctx, fmt.Sprintf("%s#%d", key, 1))
+	require.NoError(t, err)
+
+	count := 0
+	err = c.SaveMutable(ctx, key, 3*time.Second, func(ce *Entry) (Blob, error) {
+		require.Nil(t, ce)
+		count++
+		return NewBlob([]byte("123")), nil
+	})
+
+	require.True(t, count > 1)
+
+	ce, err := c.Load(ctx, key)
+	require.NoError(t, err)
+	require.NotNil(t, ce)
+
+	require.Equal(t, fmt.Sprintf("%s#%d", key, 2), ce.Key)
 }
