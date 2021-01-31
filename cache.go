@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
@@ -23,6 +24,7 @@ import (
 
 var UploadConcurrency = 4
 var UploadChunkSize = 32 * 1024 * 1024
+var noValidateToken bool
 
 var Log = func(string, ...interface{}) {}
 
@@ -65,19 +67,49 @@ func New(token, url string) (*Cache, error) {
 	}
 	acs, ok := ac.(string)
 	if !ok {
-		return nil, errors.Errorf("invalid token without access controls type")
+		return nil, errors.Errorf("invalid token with access controls type %T", ac)
+	}
+
+	exp, ok := claims["exp"]
+	if !ok {
+		return nil, errors.Errorf("invalid token without expiration time")
+	}
+	expf, ok := exp.(float64)
+	if !ok {
+		return nil, errors.Errorf("invalid token with expiration time type %T", acs)
+	}
+	expt := time.Unix(int64(expf), 0)
+
+	if !noValidateToken && time.Now().After(expt) {
+		return nil, errors.Errorf("cache token expired at %v", expt)
+	}
+
+	nbf, ok := claims["nbf"]
+	if !ok {
+		return nil, errors.Errorf("invalid token without expiration time")
+	}
+	nbff, ok := nbf.(float64)
+	if !ok {
+		return nil, errors.Errorf("invalid token with expiration time type %T", nbf)
+	}
+	nbft := time.Unix(int64(nbff), 0)
+
+	if !noValidateToken && time.Now().Before(nbft) {
+		return nil, errors.Errorf("invalid token with future issue time time %v", nbft)
 	}
 
 	scopes := []Scope{}
 	if err := json.Unmarshal([]byte(acs), &scopes); err != nil {
 		return nil, errors.Wrap(err, "failed to parse token access controls")
 	}
-	Log("parsed token: scopes %+v", scopes)
+	Log("parsed token: scopes: %+v, issued: %v, expires: %v", scopes, nbft, expt)
 
 	return &Cache{
-		scopes: scopes,
-		URL:    url,
-		Token:  tk,
+		scopes:    scopes,
+		URL:       url,
+		Token:     tk,
+		IssuedAt:  nbft,
+		ExpiresAt: expt,
 	}, nil
 }
 
@@ -108,9 +140,11 @@ func (p Permission) String() string {
 }
 
 type Cache struct {
-	scopes []Scope
-	URL    string
-	Token  *jwt.Token
+	scopes    []Scope
+	URL       string
+	Token     *jwt.Token
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
 
 func (c *Cache) Scopes() []Scope {
