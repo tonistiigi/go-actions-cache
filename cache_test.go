@@ -88,7 +88,7 @@ func TestExistingKey(t *testing.T) {
 	err = c.Save(ctx, key, bytes.NewReader(dt), int64(len(dt)))
 	require.Error(t, err)
 	var gae GithubAPIError
-	require.True(t, errors.As(err, &gae))
+	require.True(t, errors.As(err, &gae), "error was %+v", err)
 	require.Equal(t, "ArtifactCacheItemAlreadyExistsException", gae.TypeKey)
 }
 
