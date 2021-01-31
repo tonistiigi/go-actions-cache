@@ -132,3 +132,47 @@ func TestEncryptedToken(t *testing.T) {
 	require.Equal(t, "iamurl", url)
 	require.Equal(t, "iamtoken", token)
 }
+
+func TestPartialKeyOrder(t *testing.T) {
+	ctx := context.TODO()
+
+	c, err := TryEnv()
+	require.NoError(t, err)
+	if c == nil {
+		t.SkipNow()
+	}
+
+	rand := identity.NewID()
+
+	key1 := "partial-" + rand + "foo22"
+	dt := []byte("foo2")
+	err = c.Save(ctx, key1, bytes.NewReader(dt), int64(len(dt)))
+	require.NoError(t, err)
+
+	key2 := "partial-" + rand + "fo"
+	dt = []byte("fo")
+	err = c.Save(ctx, key2, bytes.NewReader(dt), int64(len(dt)))
+	require.NoError(t, err)
+
+	key3 := "partial-" + rand + "foo1"
+	dt = []byte("foo2")
+	err = c.Save(ctx, key3, bytes.NewReader(dt), int64(len(dt)))
+	require.NoError(t, err)
+
+	ce, err := c.Load(ctx, "partial-"+rand+"foo")
+	require.NoError(t, err)
+	require.Equal(t, "partial-"+rand+"foo1", ce.Key)
+
+	ce, err = c.Load(ctx, "partial-"+rand)
+	require.NoError(t, err)
+	require.Equal(t, "partial-"+rand+"foo1", ce.Key)
+
+	ce, err = c.Load(ctx, "partial-"+rand+"foo3")
+	require.NoError(t, err)
+	require.Nil(t, ce)
+
+	ce, err = c.Load(ctx, "partial-"+rand+"foo2")
+	require.NoError(t, err)
+	require.Equal(t, "partial-"+rand+"foo22", ce.Key)
+
+}
