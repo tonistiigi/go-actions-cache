@@ -120,3 +120,11 @@ func TestChunkedSave(t *testing.T) {
 
 	require.Equal(t, "0123456789", buf.String())
 }
+
+func TestEncryptedToken(t *testing.T) {
+	enc := "U2FsdGVkX18yqVj9dENeyEax1M10IW5sBfxE50BNPe/IrqnC6ZCNxwxaVnE52D4M"
+	url, token, err := decryptToken(enc, "bar")
+	require.NoError(t, err)
+	require.Equal(t, "iamurl", url)
+	require.Equal(t, "iamtoken", token)
+}

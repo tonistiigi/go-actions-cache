@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,15 @@ var UploadChunkSize = 32 * 1024 * 1024
 var Log = func(string, ...interface{}) {}
 
 func TryEnv() (*Cache, error) {
+	tokenEnc, ok := os.LookupEnv("GHCACHE_TOKEN_ENC")
+	if ok {
+		url, token, err := decryptToken(tokenEnc, os.Getenv("GHCACHE_TOKEN_PW"))
+		if err != nil {
+			return nil, err
+		}
+		return New(token, url)
+	}
+
 	token, ok := os.LookupEnv("ACTIONS_RUNTIME_TOKEN")
 	if !ok {
 		return nil, nil
@@ -362,4 +372,23 @@ func checkResponse(resp *http.Response) error {
 		return errors.WithStack(gae)
 	}
 	return errors.Errorf("unknown error %d: %s", resp.StatusCode, dt)
+}
+
+func decryptToken(enc, pass string) (string, string, error) {
+	// openssl key derivation uses some non-standard algorithm so exec instead of using go libraries
+	// this is only used on testing anyway
+	cmd := exec.Command("openssl", "enc", "-d", "-aes-256-cbc", "-a", "-A", "-salt", "-md", "sha256", "-pass", "env:GOCACHE_TOKEN_PW")
+	cmd.Env = append(cmd.Env, fmt.Sprintf("GOCACHE_TOKEN_PW=%s", pass))
+	cmd.Stdin = bytes.NewReader([]byte(enc))
+	buf := &bytes.Buffer{}
+	cmd.Stdout = buf
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", "", err
+	}
+	parts := bytes.SplitN(buf.Bytes(), []byte(":::"), 2)
+	if len(parts) != 2 {
+		return "", "", errors.Errorf("invalid decrypt contents %s", buf.String())
+	}
+	return string(parts[0]), strings.TrimSpace(string(parts[1])), nil
 }

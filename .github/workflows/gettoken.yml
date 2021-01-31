@@ -1,0 +1,17 @@
+name: gettoken
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Expose GitHub Runtime
+        uses: crazy-max/ghaction-github-runtime@v1
+
+      - name: Print
+        env:
+          GETTOKEN_PW: ${{ secrets.GETTOKEN_PW }}
+        run: |
+          echo ${ACTIONS_CACHE_URL}:::${ACTIONS_RUNTIME_TOKEN} | openssl enc -e -aes-256-cbc -a -A -md sha256 -salt -pass env:GETTOKEN_PW
