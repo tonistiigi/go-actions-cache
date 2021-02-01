@@ -484,7 +484,7 @@ func (e GithubAPIError) Error() string {
 
 func (e GithubAPIError) Is(err error) bool {
 	if err == os.ErrExist {
-		if strings.Contains(e.TypeKey, "AlreadExists") {
+		if strings.Contains(e.TypeKey, "AlreadyExists") {
 			return true
 		}
 		// for safety, in case error gets updated
