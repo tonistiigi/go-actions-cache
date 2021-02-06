@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"testing"
@@ -61,7 +62,7 @@ func TestSaveLoad(t *testing.T) {
 
 	require.NotEqual(t, ce.Key, "")
 	buf := bytes.NewBuffer(nil)
-	err = ce.Download(ctx, buf)
+	err = ce.WriteTo(ctx, buf)
 	require.NoError(t, err)
 	require.Equal(t, "foobar", buf.String())
 
@@ -71,7 +72,7 @@ func TestSaveLoad(t *testing.T) {
 
 	require.NotEqual(t, ce.Key, "")
 	buf = bytes.NewBuffer(nil)
-	err = ce.Download(ctx, buf)
+	err = ce.WriteTo(ctx, buf)
 	require.NoError(t, err)
 	require.Equal(t, "foobar", buf.String())
 }
@@ -119,10 +120,33 @@ func TestChunkedSave(t *testing.T) {
 	require.NotNil(t, ce)
 
 	buf := &bytes.Buffer{}
-	err = ce.Download(ctx, buf)
+	err = ce.WriteTo(ctx, buf)
 	require.NoError(t, err)
 
 	require.Equal(t, "0123456789", buf.String())
+
+	rac := ce.Download(ctx)
+	dt := make([]byte, 3)
+	n, err := rac.ReadAt(dt, 2)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	require.Equal(t, "234", string(dt[:n]))
+
+	n, err = rac.ReadAt(dt, 2+3)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	require.Equal(t, "567", string(dt[:n]))
+
+	n, err = rac.ReadAt(dt, 3)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	require.Equal(t, "345", string(dt[:n]))
+
+	n, err = rac.ReadAt(dt, 8)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, io.EOF))
+	require.Equal(t, 2, n)
+	require.Equal(t, "89", string(dt[:n]))
 }
 
 func TestEncryptedToken(t *testing.T) {
@@ -197,7 +221,7 @@ func TestMutable(t *testing.T) {
 		require.NotNil(t, ce)
 		require.Equal(t, fmt.Sprintf("%s#%d", key, 1), ce.Key)
 		buf := &bytes.Buffer{}
-		err := ce.Download(ctx, buf)
+		err := ce.WriteTo(ctx, buf)
 		require.NoError(t, err)
 		return NewBlob(append(buf.Bytes(), []byte("def")...)), nil
 	})
@@ -208,7 +232,7 @@ func TestMutable(t *testing.T) {
 	require.NotNil(t, ce)
 
 	buf := &bytes.Buffer{}
-	err = ce.Download(ctx, buf)
+	err = ce.WriteTo(ctx, buf)
 	require.NoError(t, err)
 
 	require.Equal(t, "abcdef", buf.String())
@@ -235,7 +259,7 @@ func TestMutableRace(t *testing.T) {
 		err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 			require.NotNil(t, ce)
 			buf := &bytes.Buffer{}
-			err := ce.Download(ctx, buf)
+			err := ce.WriteTo(ctx, buf)
 			require.NoError(t, err)
 			return NewBlob(append(buf.Bytes(), []byte("456")...)), nil
 		})
@@ -246,7 +270,7 @@ func TestMutableRace(t *testing.T) {
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.NotNil(t, ce)
 		buf := &bytes.Buffer{}
-		err := ce.Download(ctx, buf)
+		err := ce.WriteTo(ctx, buf)
 		require.NoError(t, err)
 		if count == 0 {
 			require.Equal(t, fmt.Sprintf("%s#%d", key, 1), ce.Key)
@@ -264,7 +288,7 @@ func TestMutableRace(t *testing.T) {
 	require.NotNil(t, ce)
 
 	buf := &bytes.Buffer{}
-	err = ce.Download(ctx, buf)
+	err = ce.WriteTo(ctx, buf)
 	require.NoError(t, err)
 
 	require.Equal(t, "123456789", buf.String())

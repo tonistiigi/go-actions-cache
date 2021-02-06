@@ -449,18 +449,41 @@ type Entry struct {
 	URL   string `json:"archiveLocation"`
 }
 
-func (ce *Entry) Download(ctx context.Context, w io.Writer) error {
-	req, err := http.NewRequest("GET", ce.URL, nil)
-	if err != nil {
-		return errors.WithStack(err)
+func (ce *Entry) WriteTo(ctx context.Context, w io.Writer) error {
+	rac := ce.Download(ctx)
+	if _, err := io.Copy(w, &rc{ReaderAt: rac}); err != nil {
+		return err
 	}
-	req = req.WithContext(ctx)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	_, err = io.Copy(w, resp.Body)
-	return errors.WithStack(err)
+	return rac.Close()
+}
+
+// Download returns a ReaderAtCloser for pulling the data. Concurrent reads are not allowed
+func (ce *Entry) Download(ctx context.Context) ReaderAtCloser {
+	return toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
+		req, err := http.NewRequest("GET", ce.URL, nil)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		req = req.WithContext(ctx)
+		if offset != 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, errors.Errorf("invalid status response %v for %s", resp.Status, ce.URL)
+		}
+		if offset != 0 {
+			cr := resp.Header.Get("content-range")
+			if !strings.HasPrefix(cr, fmt.Sprintf("bytes %d-", offset)) {
+				resp.Body.Close()
+				return nil, errors.Errorf("unhandled content range in response: %v", cr)
+			}
+		}
+		return resp.Body, nil
+	})
 }
 
 func version(k string) string {
