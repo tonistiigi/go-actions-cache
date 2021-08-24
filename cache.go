@@ -18,6 +18,7 @@ import (
 	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/dimchansky/utfbom"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
@@ -539,7 +540,7 @@ func checkResponse(resp *http.Response) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	dt, err := ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	dt, err := ioutil.ReadAll(utfbom.SkipOnly(io.LimitReader(resp.Body, 32*1024)))
 	if err != nil {
 		return errors.WithStack(err)
 	}
