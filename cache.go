@@ -80,7 +80,9 @@ func TryEnv(opt Opt) (*Cache, error) {
 }
 
 type Opt struct {
-	Client *http.Client
+	Client      *http.Client
+	Timeout     time.Duration
+	BackoffPool *BackoffPool
 }
 
 func New(token, url string, opt Opt) (*Cache, error) {
@@ -137,6 +139,13 @@ func New(token, url string, opt Opt) (*Cache, error) {
 
 	if opt.Client == nil {
 		opt.Client = http.DefaultClient
+	}
+	if opt.Timeout == 0 {
+		opt.Timeout = 5 * time.Minute
+	}
+
+	if opt.BackoffPool == nil {
+		opt.BackoffPool = defaultBackoffPool
 	}
 
 	return &Cache{
@@ -199,14 +208,10 @@ func (c *Cache) Load(ctx context.Context, keys ...string) (*Entry, error) {
 	q.Set("keys", strings.Join(keys, ","))
 	q.Set("version", version(keys[0]))
 	req.URL.RawQuery = q.Encode()
-	req = req.WithContext(ctx)
 	Log("load cache %s", req.URL.String())
-	resp, err := c.opt.Client.Do(req)
+	resp, err := c.doWithRetries(ctx, req)
 	if err != nil {
 		return nil, errors.WithStack(err)
-	}
-	if err := checkResponse(resp); err != nil {
-		return nil, err
 	}
 	var ce Entry
 	dt, err := ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
@@ -238,14 +243,10 @@ func (c *Cache) reserve(ctx context.Context, key string) (int, error) {
 	c.auth(req)
 	c.accept(req)
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(ctx)
 	Log("save cache req %s body=%s", req.URL.String(), dt)
-	resp, err := c.opt.Client.Do(req)
+	resp, err := c.doWithRetries(ctx, req)
 	if err != nil {
 		return 0, errors.WithStack(err)
-	}
-	if err := checkResponse(resp); err != nil {
-		return 0, err
 	}
 
 	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
@@ -276,12 +277,9 @@ func (c *Cache) commit(ctx context.Context, id int, size int64) error {
 	c.accept(req)
 	req.Header.Set("Content-Type", "application/json")
 	Log("commit cache %s, size %d", req.URL.String(), size)
-	resp, err := c.opt.Client.Do(req)
+	resp, err := c.doWithRetries(ctx, req)
 	if err != nil {
 		return errors.Wrapf(err, "error committing cache %d", id)
-	}
-	if err := checkResponse(resp); err != nil {
-		return err
 	}
 	dt, err = ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
 	if err != nil {
@@ -413,12 +411,9 @@ func (c *Cache) uploadChunk(ctx context.Context, id int, ra io.ReaderAt, off, n 
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", off, off+n-1))
 
 	Log("upload cache chunk %s, range %d-%d", req.URL.String(), off, off+n-1)
-	resp, err := c.opt.Client.Do(req)
+	resp, err := c.doWithRetries(ctx, req)
 	if err != nil {
 		return errors.WithStack(err)
-	}
-	if err := checkResponse(resp); err != nil {
-		return err
 	}
 	dt, err := ioutil.ReadAll(io.LimitReader(resp.Body, 32*1024))
 	if err != nil {
@@ -428,6 +423,38 @@ func (c *Cache) uploadChunk(ctx context.Context, id int, ra io.ReaderAt, off, n 
 		Log("upload chunk resp: %s", dt)
 	}
 	return resp.Body.Close()
+}
+
+func (c *Cache) doWithRetries(ctx context.Context, req *http.Request) (*http.Response, error) {
+	req = req.WithContext(ctx)
+	var err error
+	max := time.Now().Add(c.opt.Timeout)
+	for {
+		if err1 := c.opt.BackoffPool.Wait(ctx, time.Until(max)); err1 != nil {
+			if err != nil {
+				return nil, errors.Wrapf(err, "%v", err1)
+			}
+			return nil, err1
+		}
+		var resp *http.Response
+		resp, err = c.opt.Client.Do(req)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		if err := checkResponse(resp); err != nil {
+			var he HTTPError
+			if errors.As(err, &he) {
+				if he.StatusCode == http.StatusTooManyRequests {
+					c.opt.BackoffPool.Delay()
+					continue
+				}
+			}
+			c.opt.BackoffPool.Reset()
+			return nil, err
+		}
+		c.opt.BackoffPool.Reset()
+		return resp, nil
+	}
 }
 
 func (c *Cache) auth(r *http.Request) {
@@ -536,6 +563,19 @@ func (e GithubAPIError) Is(err error) bool {
 	return false
 }
 
+type HTTPError struct {
+	StatusCode int
+	Err        error
+}
+
+func (e HTTPError) Error() string {
+	return e.Err.Error()
+}
+
+func (e HTTPError) Unwrap() error {
+	return e.Err
+}
+
 func checkResponse(resp *http.Response) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
@@ -545,13 +585,18 @@ func checkResponse(resp *http.Response) error {
 		return errors.WithStack(err)
 	}
 	var gae GithubAPIError
-	if err := json.Unmarshal(dt, &gae); err != nil {
-		return errors.Wrapf(err, "failed to parse error response %d: %s", resp.StatusCode, dt)
+	if err1 := json.Unmarshal(dt, &gae); err1 != nil {
+		err = errors.Wrapf(err1, "failed to parse error response %d: %s", resp.StatusCode, dt)
+	} else if gae.Message != "" {
+		err = errors.WithStack(gae)
+	} else {
+		err = errors.Errorf("unknown error %s: %s", resp.Status, dt)
 	}
-	if gae.Message != "" {
-		return errors.WithStack(gae)
+
+	return HTTPError{
+		StatusCode: resp.StatusCode,
+		Err:        err,
 	}
-	return errors.Errorf("unknown error %d: %s", resp.StatusCode, dt)
 }
 
 func decryptToken(enc, pass string) (string, string, error) {

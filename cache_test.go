@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -96,6 +97,9 @@ func TestExistingKey(t *testing.T) {
 	require.True(t, errors.As(err, &gae), "error was %+v", err)
 	require.Equal(t, "ArtifactCacheItemAlreadyExistsException", gae.TypeKey)
 	require.True(t, errors.Is(err, os.ErrExist))
+	var he HTTPError
+	require.True(t, errors.As(err, &he), "error was %+v", err)
+	require.Equal(t, http.StatusConflict, he.StatusCode)
 }
 
 func TestChunkedSave(t *testing.T) {
