@@ -602,8 +602,8 @@ func checkResponse(resp *http.Response) error {
 func decryptToken(enc, pass string) (string, string, error) {
 	// openssl key derivation uses some non-standard algorithm so exec instead of using go libraries
 	// this is only used on testing anyway
-	cmd := exec.Command("openssl", "enc", "-d", "-aes-256-cbc", "-a", "-A", "-salt", "-md", "sha256", "-pass", "env:GOCACHE_TOKEN_PW")
-	cmd.Env = append(cmd.Env, fmt.Sprintf("GOCACHE_TOKEN_PW=%s", pass))
+	cmd := exec.Command("openssl", "enc", "-d", "-aes-256-cbc", "-a", "-A", "-salt", "-md", "sha256", "-pass", "env:GHCACHE_TOKEN_PW")
+	cmd.Env = append(cmd.Env, fmt.Sprintf("GHCACHE_TOKEN_PW=%s", pass))
 	cmd.Stdin = bytes.NewReader([]byte(enc))
 	buf := &bytes.Buffer{}
 	cmd.Stdout = buf
