@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	jwt "github.com/golang-jwt/jwt/v4"
 	"github.com/dimchansky/utfbom"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
