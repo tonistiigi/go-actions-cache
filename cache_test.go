@@ -319,6 +319,7 @@ func TestMutableCrash(t *testing.T) {
 		count++
 		return NewBlob([]byte("123")), nil
 	})
+	require.NoError(t, err)
 
 	require.True(t, count > 1)
 
