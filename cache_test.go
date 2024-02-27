@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moby/buildkit/identity"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +40,7 @@ func TestTokenScopes(t *testing.T) {
 }
 
 func TestSaveLoad(t *testing.T) {
-	key := identity.NewID()
+	key := newID()
 	ctx := context.TODO()
 
 	c, err := TryEnv(Opt{})
@@ -113,7 +112,7 @@ func TestChunkedSave(t *testing.T) {
 	oldChunkSize := UploadChunkSize
 	UploadChunkSize = 2
 
-	id := identity.NewID()
+	id := newID()
 	err = c.Save(ctx, id, NewBlob([]byte("0123456789")))
 	require.NoError(t, err)
 
@@ -170,7 +169,7 @@ func TestPartialKeyOrder(t *testing.T) {
 		t.SkipNow()
 	}
 
-	rand := identity.NewID()
+	rand := newID()
 
 	key1 := "partial-" + rand + "foo22"
 	dt := []byte("foo2")
@@ -213,7 +212,7 @@ func TestMutable(t *testing.T) {
 		t.SkipNow()
 	}
 
-	key := "mutable-" + identity.NewID()
+	key := "mutable-" + newID()
 
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.Nil(t, ce)
@@ -251,7 +250,7 @@ func TestMutableRace(t *testing.T) {
 		t.SkipNow()
 	}
 
-	key := "mutable-race-" + identity.NewID()
+	key := "mutable-race-" + newID()
 
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.Nil(t, ce)
@@ -307,7 +306,7 @@ func TestMutableCrash(t *testing.T) {
 		t.SkipNow()
 	}
 
-	key := "mutable-race-" + identity.NewID()
+	key := "mutable-race-" + newID()
 
 	// reserve key but don't do anything, as if crashed
 	_, err = c.reserve(ctx, fmt.Sprintf("%s#%d", key, 1))
