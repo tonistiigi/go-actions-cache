@@ -1,28 +1,39 @@
 name: test
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - master
-      - cachetest
   pull_request:
 
 jobs:
   docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Test
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Test
         uses: ./test_action 
 
   inline:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Setup go
-        uses: actions/setup-go@v2
-      - name: Expose GitHub Runtime
-        uses: crazy-max/ghaction-github-runtime@v1
-      - name: Test
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      -
+        name: Expose GitHub Runtime
+        uses: crazy-max/ghaction-github-runtime@v3
+      -
+        name: Test
         run: go test -v .
