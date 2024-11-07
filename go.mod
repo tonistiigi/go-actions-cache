@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/dimchansky/utfbom v1.1.1
-	github.com/golang-jwt/jwt/v4 v4.5.1
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.8.0
