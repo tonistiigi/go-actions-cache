@@ -10,7 +10,7 @@ on:
   pull_request:
 
 jobs:
-  docker:
+  test-action:
     runs-on: ubuntu-latest
     steps:
       -
@@ -20,7 +20,7 @@ jobs:
         name: Test
         uses: ./test_action
 
-  inline:
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -32,15 +32,9 @@ jobs:
         name: Checkout
         uses: actions/checkout@v4
       -
-        name: Setup go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-      -
-        name: Expose GitHub Runtime
-        uses: crazy-max/ghaction-github-runtime@v3
-      -
         name: Test
+        uses: docker/bake-action@v5
+        with:
+          targets: test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: go test -v .
