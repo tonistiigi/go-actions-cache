@@ -13,7 +13,9 @@ WORKDIR /src
 FROM base AS test
 ARG TESTFLAGS
 ARG GITHUB_REPOSITORY
+ARG ACTIONS_CACHE_SERVICE_V2
 ARG ACTIONS_CACHE_URL
+ARG ACTIONS_RESULTS_URL
 RUN --mount=target=. \
     --mount=target=/go/pkg/mod,type=cache \
     --mount=target=/root/.cache,type=cache \

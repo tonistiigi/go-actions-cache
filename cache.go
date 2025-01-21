@@ -56,13 +56,24 @@ func NewBlob(dt []byte) Blob {
 }
 
 func TryEnv(opt Opt) (*Cache, error) {
+	// https://github.com/actions/toolkit/blob/1f7c2c79e034fe8a0d28006f52fc5b70f6dbb750/packages/cache/src/internal/config.ts#L14-L20
+	cacheVersion := func() string {
+		if isGhes() {
+			return "v1"
+		}
+		if os.Getenv("ACTIONS_CACHE_SERVICE_V2") != "" {
+			return "v2"
+		}
+		return "v1"
+	}()
+
 	tokenEnc, ok := os.LookupEnv("GHCACHE_TOKEN_ENC")
 	if ok {
 		url, token, err := decryptToken(tokenEnc, os.Getenv("GHCACHE_TOKEN_PW"))
 		if err != nil {
 			return nil, err
 		}
-		return New(token, url, opt)
+		return New(token, url, cacheVersion, opt)
 	}
 
 	token, ok := os.LookupEnv("ACTIONS_RUNTIME_TOKEN")
@@ -71,12 +82,30 @@ func TryEnv(opt Opt) (*Cache, error) {
 	}
 
 	// ACTIONS_CACHE_URL=https://artifactcache.actions.githubusercontent.com/xxx/
-	cacheURL, ok := os.LookupEnv("ACTIONS_CACHE_URL")
+	// https://github.com/actions/toolkit/blob/1f7c2c79e034fe8a0d28006f52fc5b70f6dbb750/packages/cache/src/internal/config.ts#L22-L39
+	cacheURL, ok := func(version string) (string, bool) {
+		switch version {
+		case "v1":
+			if v, ok := os.LookupEnv("ACTIONS_CACHE_URL"); ok {
+				return v, ok
+			}
+			if v, ok := os.LookupEnv("ACTIONS_RESULTS_URL"); ok {
+				return v, ok
+			}
+			break
+		case "v2":
+			if v, ok := os.LookupEnv("ACTIONS_RESULTS_URL"); ok {
+				return v, ok
+			}
+			break
+		}
+		return "", false
+	}(cacheVersion)
 	if !ok {
 		return nil, nil
 	}
 
-	return New(token, cacheURL, opt)
+	return New(token, cacheURL, cacheVersion, opt)
 }
 
 type Opt struct {
@@ -85,7 +114,9 @@ type Opt struct {
 	BackoffPool *BackoffPool
 }
 
-func New(token, url string, opt Opt) (*Cache, error) {
+func New(token, url string, version string, opt Opt) (*Cache, error) {
+	Log("cache service version: %s", version)
+
 	tk, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -146,6 +177,7 @@ func New(token, url string, opt Opt) (*Cache, error) {
 		Token:     tk,
 		IssuedAt:  nbft,
 		ExpiresAt: expt,
+		Version:   version,
 	}, nil
 }
 
@@ -195,6 +227,7 @@ type Cache struct {
 	Token     *jwt.Token
 	IssuedAt  time.Time
 	ExpiresAt time.Time
+	Version   string
 }
 
 func (c *Cache) Scopes() []Scope {
@@ -670,4 +703,16 @@ func decryptToken(enc, pass string) (string, string, error) {
 		return "", "", errors.Errorf("invalid decrypt contents %s", buf.String())
 	}
 	return string(parts[0]), strings.TrimSpace(string(parts[1])), nil
+}
+
+func isGhes() bool {
+	ghUrl, err := url.Parse(os.Getenv("GITHUB_SERVER_URL"))
+	if err != nil || ghUrl.String() == "" {
+		ghUrl, _ = url.Parse("https://github.com")
+	}
+	hostname := strings.TrimSpace(strings.ToUpper(ghUrl.Hostname()))
+	isGitHubHost := hostname == "GITHUB.COM"
+	isGheHost := strings.HasSuffix(hostname, ".GHE.COM")
+	isLocalHost := strings.HasSuffix(hostname, ".LOCALHOST")
+	return !isGitHubHost && !isGheHost && !isLocalHost
 }
