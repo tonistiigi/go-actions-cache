@@ -28,6 +28,11 @@ func TestAllKeys(t *testing.T) {
 		t.SkipNow()
 	}
 
+	if c.IsV2 {
+		t.Logf("V2 cache seems to not integrate with REST API atm")
+		t.SkipNow()
+	}
+
 	api, err := NewRestAPI(ghRepo, ghToken, Opt{})
 	require.NoError(t, err)
 

@@ -27,6 +27,9 @@ jobs:
         go:
           - "1.23"
           - "1.22"
+        api:
+          - "v1"
+          - "v2"
     steps:
       -
         name: Checkout
@@ -38,3 +41,4 @@ jobs:
           targets: test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIONS_CACHE_API_FORCE_VERSION: ${{ matrix.api }}
