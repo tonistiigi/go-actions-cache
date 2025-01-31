@@ -192,11 +192,7 @@ func TestPartialKeyOrder(t *testing.T) {
 
 	ce, err = c.Load(ctx, "partial-"+rand)
 	require.NoError(t, err)
-	if c.IsV2 {
-		require.Equal(t, "partial-"+rand+"fo", ce.Key)
-	} else {
-		require.Equal(t, "partial-"+rand+"foo1", ce.Key)
-	}
+	require.Equal(t, "partial-"+rand+"foo1", ce.Key)
 
 	ce, err = c.Load(ctx, "partial-"+rand+"foo3")
 	require.NoError(t, err)
@@ -227,9 +223,6 @@ func TestMutable(t *testing.T) {
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.NotNil(t, ce)
 		expIdx := 1
-		if c.IsV2 {
-			expIdx = 1e9 - 1
-		}
 		require.Equal(t, fmt.Sprintf("%s#%d", key, expIdx), ce.Key)
 		buf := &bytes.Buffer{}
 		err := ce.WriteTo(ctx, buf)
@@ -284,9 +277,6 @@ func TestMutableRace(t *testing.T) {
 		err := ce.WriteTo(ctx, buf)
 		require.NoError(t, err)
 		expIdx := 1
-		if c.IsV2 {
-			expIdx = 1e9 - 1
-		}
 		if count == 0 {
 			require.Equal(t, fmt.Sprintf("%s#%d", key, expIdx), ce.Key)
 			addAnother()
@@ -322,9 +312,6 @@ func TestMutableCrash(t *testing.T) {
 
 	// reserve key but don't do anything, as if crashed
 	idx := 1
-	if c.IsV2 {
-		idx = 1e9 - 1
-	}
 	_, _, err = c.reserve(ctx, fmt.Sprintf("%s#%d", key, idx))
 	require.NoError(t, err)
 
@@ -343,8 +330,5 @@ func TestMutableCrash(t *testing.T) {
 	require.NotNil(t, ce)
 
 	expIdx := 2
-	if c.IsV2 {
-		expIdx = 1e9 - 2
-	}
 	require.Equal(t, fmt.Sprintf("%s#%d", key, expIdx), ce.Key)
 }

@@ -426,10 +426,6 @@ loop0:
 			}
 		}
 		idx := 0
-		// for some reason v2 sorting is backwards
-		if c.IsV2 {
-			idx = 1e9
-		}
 		if ce != nil {
 			idxs := strings.TrimPrefix(ce.Key, key+"#")
 			if idxs == "" {
@@ -443,11 +439,7 @@ loop0:
 		var cacheID string
 		var url string
 		for {
-			if c.IsV2 {
-				idx--
-			} else {
-				idx++
-			}
+			idx++
 			cacheID, url, err = c.reserve(ctx, fmt.Sprintf("%s#%d", key, idx))
 			if err != nil {
 				if errors.Is(err, os.ErrExist) {
