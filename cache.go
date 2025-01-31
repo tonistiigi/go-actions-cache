@@ -721,6 +721,11 @@ func checkResponse(resp *http.Response) error {
 		}
 		if err1 := json.Unmarshal(dt, &errorV2); err1 == nil && errorV2.Code != "" {
 			gae.Message = errorV2.Msg
+			if gae.Message == "" {
+				gae.Message = errorV2.Code
+			} else {
+				gae.Message = resp.Status
+			}
 			if errorV2.Code == "already_exists" {
 				errorV2.Code = "ArtifactCacheItemAlreadyExistsException"
 			}
