@@ -28,6 +28,10 @@ func TestAllKeys(t *testing.T) {
 		t.SkipNow()
 	}
 
+	if !c.IsV2 {
+		t.Skip("rest API is only enabled for v2 in this repo")
+	}
+
 	api, err := NewRestAPI(ghRepo, ghToken, Opt{})
 	require.NoError(t, err)
 
