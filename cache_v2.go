@@ -6,8 +6,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/pkg/errors"
 )
 
@@ -46,13 +45,13 @@ func (c *Cache) reserveV2(ctx context.Context, key string) (string, error) {
 }
 
 func (c *Cache) uploadV2(ctx context.Context, url string, b Blob) error {
-	client, err := blockblob.NewClientWithNoCredential(url, nil)
+	client, err := azblob.NewBlockBlobClientWithNoCredential(url, nil)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 
 	// uploading with sized blocks requires io.File ¯\_(ツ)_/¯
-	resp, err := client.UploadStream(ctx, &rc{ReaderAt: b}, nil)
+	resp, err := client.UploadStream(ctx, &rc{ReaderAt: b}, azblob.UploadStreamOptions{})
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -62,17 +61,17 @@ func (c *Cache) uploadV2(ctx context.Context, url string, b Blob) error {
 
 func (ce *Entry) downloadV2(ctx context.Context) ReaderAtCloser {
 	return toReaderAtCloser(func(offset int64) (io.ReadCloser, error) {
-		client, err := blockblob.NewClientWithNoCredential(ce.URL, nil)
+		client, err := azblob.NewBlockBlobClientWithNoCredential(ce.URL, nil)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		resp, err := client.DownloadStream(ctx, &blob.DownloadStreamOptions{
-			Range: blob.HTTPRange{Offset: offset},
+		resp, err := client.Download(ctx, &azblob.BlobDownloadOptions{
+			Offset: &offset,
 		})
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		return resp.Body, nil
+		return resp.RawResponse.Body, nil
 	})
 }
 
