@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +46,9 @@ func TestAllKeys(t *testing.T) {
 
 	err = c.Save(ctx, k, NewBlob([]byte("foobar")))
 	require.NoError(t, err)
+
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
 
 	m, err = c.AllKeys(ctx, api, "allkeys_test_")
 	require.NoError(t, err)

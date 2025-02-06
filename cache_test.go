@@ -56,6 +56,9 @@ func TestSaveLoad(t *testing.T) {
 	err = c.Save(ctx, key, NewBlob([]byte("foobar")))
 	require.NoError(t, err)
 
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
+
 	ce, err = c.Load(ctx, key)
 	require.NoError(t, err)
 	require.NotNil(t, ce)
@@ -117,6 +120,9 @@ func TestChunkedSave(t *testing.T) {
 	require.NoError(t, err)
 
 	UploadChunkSize = oldChunkSize
+
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
 
 	ce, err := c.Load(ctx, id)
 	require.NoError(t, err)
@@ -186,6 +192,9 @@ func TestPartialKeyOrder(t *testing.T) {
 	err = c.Save(ctx, key3, NewBlob(dt))
 	require.NoError(t, err)
 
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
+
 	ce, err := c.Load(ctx, "partial-"+rand+"foo")
 	require.NoError(t, err)
 	require.Equal(t, "partial-"+rand+"foo1", ce.Key)
@@ -220,6 +229,9 @@ func TestMutable(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
+
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.NotNil(t, ce)
 		expIdx := 1
@@ -230,6 +242,9 @@ func TestMutable(t *testing.T) {
 		return NewBlob(append(buf.Bytes(), []byte("def")...)), nil
 	})
 	require.NoError(t, err)
+
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
 
 	ce, err := c.Load(ctx, key)
 	require.NoError(t, err)
@@ -270,6 +285,9 @@ func TestMutableRace(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
+
 	count := 0
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.NotNil(t, ce)
@@ -287,6 +305,9 @@ func TestMutableRace(t *testing.T) {
 		return NewBlob(append(buf.Bytes(), []byte("789")...)), nil
 	})
 	require.NoError(t, err)
+
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
 
 	ce, err := c.Load(ctx, key)
 	require.NoError(t, err)
@@ -324,6 +345,9 @@ func TestMutableCrash(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, count > 1)
+
+	// v2 API is not immediately consistent
+	time.Sleep(1 * time.Second)
 
 	ce, err := c.Load(ctx, key)
 	require.NoError(t, err)
