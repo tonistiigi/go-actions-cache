@@ -500,12 +500,12 @@ func (c *Cache) newRequest(method, url string, body func() io.Reader) *request {
 }
 
 func (c *Cache) doWithRetries(ctx context.Context, r *request) (*http.Response, error) {
-	var err error
+	var lastErr error
 	max := time.Now().Add(c.opt.Timeout)
 	for {
 		if err1 := c.opt.BackoffPool.Wait(ctx, time.Until(max)); err1 != nil {
-			if err != nil {
-				return nil, errors.Wrapf(err, "%v", err1)
+			if lastErr != nil {
+				return nil, errors.Wrapf(lastErr, "%v", err1)
 			}
 			return nil, err1
 		}
@@ -525,6 +525,7 @@ func (c *Cache) doWithRetries(ctx context.Context, r *request) (*http.Response, 
 			if errors.As(err, &he) {
 				if he.StatusCode == http.StatusTooManyRequests {
 					c.opt.BackoffPool.Delay()
+					lastErr = err
 					continue
 				}
 			}
