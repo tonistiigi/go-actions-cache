@@ -57,7 +57,7 @@ func TestSaveLoad(t *testing.T) {
 	require.NoError(t, err)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	ce, err = c.Load(ctx, key)
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestChunkedSave(t *testing.T) {
 	UploadChunkSize = oldChunkSize
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	ce, err := c.Load(ctx, id)
 	require.NoError(t, err)
@@ -193,7 +193,7 @@ func TestPartialKeyOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	ce, err := c.Load(ctx, "partial-"+rand+"foo")
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestMutable(t *testing.T) {
 	require.NoError(t, err)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
 		require.NotNil(t, ce)
@@ -244,7 +244,7 @@ func TestMutable(t *testing.T) {
 	require.NoError(t, err)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	ce, err := c.Load(ctx, key)
 	require.NoError(t, err)
@@ -286,7 +286,7 @@ func TestMutableRace(t *testing.T) {
 	}
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	count := 0
 	err = c.SaveMutable(ctx, key, 10*time.Second, func(ce *Entry) (Blob, error) {
@@ -307,7 +307,7 @@ func TestMutableRace(t *testing.T) {
 	require.NoError(t, err)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	ce, err := c.Load(ctx, key)
 	require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestMutableCrash(t *testing.T) {
 	require.True(t, count > 1)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	ce, err := c.Load(ctx, key)
 	require.NoError(t, err)
