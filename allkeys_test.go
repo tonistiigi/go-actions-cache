@@ -48,7 +48,7 @@ func TestAllKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	// v2 API is not immediately consistent
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	m, err = c.AllKeys(ctx, api, "allkeys_test_")
 	require.NoError(t, err)
