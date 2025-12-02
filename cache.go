@@ -627,6 +627,7 @@ func (ce *Entry) Download(ctx context.Context) ReaderAtCloser {
 			return nil, errors.WithStack(err)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 				return nil, errors.Errorf("invalid status response %v for %s, range: %v", resp.Status, ce.URL, req.Header.Get("Range"))
 			}
