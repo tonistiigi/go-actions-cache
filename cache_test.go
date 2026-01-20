@@ -356,3 +356,37 @@ func TestMutableCrash(t *testing.T) {
 	expIdx := 2
 	require.Equal(t, fmt.Sprintf("%s#%d", key, expIdx), ce.Key)
 }
+
+func TestParseRetryAfter(t *testing.T) {
+	t.Run("seconds", func(t *testing.T) {
+		delay, ok := parseRetryAfter("5")
+		require.True(t, ok)
+		require.Equal(t, 5*time.Second, delay)
+	})
+
+	t.Run("negative-seconds", func(t *testing.T) {
+		delay, ok := parseRetryAfter("-1")
+		require.True(t, ok)
+		require.Equal(t, time.Duration(0), delay)
+	})
+
+	t.Run("http-date", func(t *testing.T) {
+		target := time.Now().Add(500 * time.Millisecond).UTC()
+		delay, ok := parseRetryAfter(target.Format(http.TimeFormat))
+		require.True(t, ok)
+		require.GreaterOrEqual(t, delay, time.Duration(0))
+		require.LessOrEqual(t, delay, 2*time.Second)
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		delay, ok := parseRetryAfter("nope")
+		require.False(t, ok)
+		require.Equal(t, time.Duration(0), delay)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		delay, ok := parseRetryAfter("  ")
+		require.False(t, ok)
+		require.Equal(t, time.Duration(0), delay)
+	})
+}
