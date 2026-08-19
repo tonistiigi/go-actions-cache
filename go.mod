@@ -1,6 +1,6 @@
 module github.com/tonistiigi/go-actions-cache
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.16.0
