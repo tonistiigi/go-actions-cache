@@ -8,13 +8,13 @@ require (
 	github.com/dimchansky/utfbom v1.1.1
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/pkg/errors v0.9.1
-	github.com/stretchr/testify v1.12.0
+	github.com/stretchr/testify v1.12.1
 	golang.org/x/sync v0.8.0
 )
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.29.0 // indirect
 	golang.org/x/text v0.19.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
