@@ -7,10 +7,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -389,4 +391,69 @@ func TestParseRetryAfter(t *testing.T) {
 		require.False(t, ok)
 		require.Equal(t, time.Duration(0), delay)
 	})
+}
+
+func TestV2WriteErrorMessage(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		method   string
+		response string
+		want     string
+		write    func(*Cache) error
+	}{
+		{
+			name:     "reserve with message",
+			method:   "CreateCacheEntry",
+			response: `{"ok":false,"message":"You have reached your configured budget, your cache is now read only to prevent additional charges."}`,
+			want:     "failed to reserve cache: You have reached your configured budget, your cache is now read only to prevent additional charges.",
+			write: func(cache *Cache) error {
+				_, err := cache.reserveV2(t.Context(), "key")
+				return err
+			},
+		},
+		{
+			name:     "reserve without message",
+			method:   "CreateCacheEntry",
+			response: `{"ok":false}`,
+			want:     "failed to reserve cache",
+			write: func(cache *Cache) error {
+				_, err := cache.reserveV2(t.Context(), "key")
+				return err
+			},
+		},
+		{
+			name:     "commit with message",
+			method:   "FinalizeCacheEntryUpload",
+			response: `{"ok":false,"message":"cache is read only"}`,
+			want:     "failed to commit cache: cache is read only",
+			write: func(cache *Cache) error {
+				return cache.commitV2(t.Context(), "key", 1)
+			},
+		},
+		{
+			name:     "commit without message",
+			method:   "FinalizeCacheEntryUpload",
+			response: `{"ok":false}`,
+			want:     "failed to commit cache",
+			write: func(cache *Cache) error {
+				return cache.commitV2(t.Context(), "key", 1)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/twirp/github.actions.results.api.v1.CacheService/"+test.method, request.URL.Path)
+				_, err := writer.Write([]byte(test.response))
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+
+			cache := &Cache{
+				URL:   server.URL,
+				Token: &jwt.Token{},
+				opt:   optsWithDefaults(Opt{Client: server.Client()}),
+			}
+			require.EqualError(t, test.write(cache), test.want)
+		})
+	}
 }
