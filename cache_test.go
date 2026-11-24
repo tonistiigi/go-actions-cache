@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -19,6 +21,215 @@ import (
 
 func init() {
 	Log = log.Printf
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestRetryResponses(t *testing.T) {
+	for _, tc := range []struct {
+		status   int
+		attempts int
+	}{
+		{
+			status:   http.StatusTooManyRequests,
+			attempts: 2,
+		},
+		{
+			status:   http.StatusBadGateway,
+			attempts: 2,
+		},
+		{
+			status:   http.StatusServiceUnavailable,
+			attempts: 2,
+		},
+		{
+			status:   http.StatusGatewayTimeout,
+			attempts: 2,
+		},
+		{
+			status:   http.StatusForbidden,
+			attempts: 1,
+		},
+		{
+			status:   http.StatusNotImplemented,
+			attempts: 1,
+		},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				attempts := 0
+				c := &Cache{opt: Opt{
+					Timeout:     time.Minute,
+					BackoffPool: &BackoffPool{},
+					Client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						attempts++
+						body, err := io.ReadAll(req.Body)
+						require.NoError(t, err)
+						require.NoError(t, req.Body.Close())
+						require.Equal(t, "payload", string(body))
+						status := tc.status
+						if attempts > 1 {
+							status = http.StatusOK
+						}
+						return &http.Response{
+							StatusCode: status,
+							Body:       io.NopCloser(bytes.NewBufferString("upstream unavailable")),
+						}, nil
+					})},
+				}}
+				start := time.Now()
+				resp, err := c.doWithRetries(context.Background(), &request{
+					method: http.MethodPost,
+					url:    "https://cache.example/test",
+					body:   func() io.Reader { return bytes.NewBufferString("payload") },
+				})
+				if tc.attempts > 1 {
+					require.NoError(t, err)
+					require.NoError(t, resp.Body.Close())
+					require.GreaterOrEqual(t, time.Since(start), minBackoff/2)
+					require.Less(t, time.Since(start), minBackoff)
+				} else {
+					require.Error(t, err)
+				}
+				require.Equal(t, tc.attempts, attempts)
+			})
+		})
+	}
+}
+
+func TestRetryResponseTimeout(t *testing.T) {
+	for _, retryAfter := range []string{"", "0", "2"} {
+		t.Run("RetryAfter="+retryAfter, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				pool := &BackoffPool{}
+				defer pool.Reset()
+				c := &Cache{opt: Opt{
+					Timeout:     3 * time.Second,
+					BackoffPool: pool,
+					Client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						time.Sleep(100 * time.Millisecond)
+						return &http.Response{
+							StatusCode: http.StatusServiceUnavailable,
+							Header:     http.Header{"Retry-After": []string{retryAfter}},
+							Body:       io.NopCloser(bytes.NewBufferString("no healthy upstream")),
+						}, nil
+					})},
+				}}
+				start := time.Now()
+				_, err := c.doWithRetries(context.Background(), &request{
+					method: http.MethodGet,
+					url:    "https://cache.example/test",
+				})
+				require.ErrorContains(t, err, "maximum timeout")
+				require.ErrorContains(t, err, "no healthy upstream")
+				var he HTTPError
+				require.ErrorAs(t, err, &he)
+				require.Equal(t, http.StatusServiceUnavailable, he.StatusCode)
+				require.LessOrEqual(t, time.Since(start), 3100*time.Millisecond)
+			})
+		})
+	}
+}
+
+func TestRetryAfterMinimum(t *testing.T) {
+	for _, header := range []string{"0", "5", "date"} {
+		t.Run(header, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				value := header
+				if value == "date" {
+					value = start.Add(5 * time.Second).Format(http.TimeFormat)
+				}
+				attempts := 0
+				failedBody := &retryTestBody{Reader: bytes.NewBufferString("no healthy upstream")}
+				c := &Cache{opt: Opt{
+					Timeout:     time.Minute,
+					BackoffPool: &BackoffPool{},
+					Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+						attempts++
+						if attempts == 1 {
+							return &http.Response{
+								StatusCode: http.StatusServiceUnavailable,
+								Header:     http.Header{"Retry-After": {value}},
+								Body:       failedBody,
+							}, nil
+						}
+						require.True(t, failedBody.closed)
+						return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+					})},
+				}}
+				resp, err := c.doWithRetries(t.Context(), &request{
+					method: http.MethodGet,
+					url:    "https://cache.example/test",
+				})
+				require.NoError(t, err)
+				resp.Body.Close()
+				require.Equal(t, 2, attempts)
+				if header == "0" {
+					require.GreaterOrEqual(t, time.Since(start), minBackoff/2)
+					require.Less(t, time.Since(start), minBackoff)
+				} else {
+					require.Equal(t, 5*time.Second, time.Since(start))
+				}
+			})
+		})
+	}
+}
+
+func TestRetryCancellation(t *testing.T) {
+	for _, header := range []string{"", "30"} {
+		t.Run("RetryAfter="+header, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				pool := &BackoffPool{}
+				defer pool.Reset()
+				body := &retryTestBody{Reader: bytes.NewBufferString("unavailable")}
+				attempts := 0
+				c := &Cache{opt: Opt{
+					Timeout:     time.Minute,
+					BackoffPool: pool,
+					Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+						attempts++
+						return &http.Response{
+							StatusCode: http.StatusServiceUnavailable,
+							Header:     http.Header{"Retry-After": {header}},
+							Body:       body,
+						}, nil
+					})},
+				}}
+				done := make(chan error, 1)
+				go func() {
+					_, err := c.doWithRetries(ctx, &request{
+						method: http.MethodGet,
+						url:    "https://cache.example/test",
+					})
+					done <- err
+				}()
+				synctest.Wait()
+				require.True(t, body.closed)
+				start := time.Now()
+				cancel()
+				require.ErrorContains(t, <-done, "context canceled")
+				require.Equal(t, 1, attempts)
+				require.Zero(t, time.Since(start))
+			})
+		})
+	}
+}
+
+type retryTestBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *retryTestBody) Close() error {
+	b.closed = true
+	return nil
 }
 
 func TestTokenScopes(t *testing.T) {
@@ -368,7 +579,7 @@ func TestParseRetryAfter(t *testing.T) {
 
 	t.Run("negative-seconds", func(t *testing.T) {
 		delay, ok := parseRetryAfter("-1")
-		require.True(t, ok)
+		require.False(t, ok)
 		require.Equal(t, time.Duration(0), delay)
 	})
 
@@ -391,6 +602,13 @@ func TestParseRetryAfter(t *testing.T) {
 		require.False(t, ok)
 		require.Equal(t, time.Duration(0), delay)
 	})
+	for _, value := range []string{"9223372037", "18446744073709551616"} {
+		t.Run(value, func(t *testing.T) {
+			delay, ok := parseRetryAfter(value)
+			require.True(t, ok)
+			require.Equal(t, time.Duration(math.MaxInt64), delay)
+		})
+	}
 }
 
 func TestV2WriteErrorMessage(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -510,6 +511,9 @@ func (c *Cache) doWithRetries(ctx context.Context, r *request) (*http.Response, 
 	var lastErr error
 	max := time.Now().Add(c.opt.Timeout)
 	for {
+		if lastErr != nil && time.Until(max) <= 0 {
+			return nil, errors.Wrap(lastErr, "maximum timeout reached")
+		}
 		if err1 := c.opt.BackoffPool.Wait(ctx, time.Until(max)); err1 != nil {
 			if lastErr != nil {
 				return nil, errors.Wrapf(lastErr, "%v", err1)
@@ -522,33 +526,32 @@ func (c *Cache) doWithRetries(ctx context.Context, r *request) (*http.Response, 
 		}
 		req = req.WithContext(ctx)
 
-		var resp *http.Response
-		resp, err = c.opt.Client.Do(req)
+		resp, err := c.opt.Client.Do(req)
 		if err != nil {
 			return nil, errors.WithStack(err)
 		}
-		if err := checkResponse(resp); err != nil {
-			var he HTTPError
-			if errors.As(err, &he) {
-				if he.StatusCode == http.StatusTooManyRequests {
-					resp.Body.Close()
-					if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
-						if err1 := sleepWithTimeout(ctx, retryAfter, time.Until(max)); err1 != nil {
-							return nil, errors.Wrapf(err, "%v", err1)
-						}
-					} else {
-						c.opt.BackoffPool.Delay()
-					}
-					lastErr = err
-					continue
-				}
-			}
-			resp.Body.Close()
+		err = checkResponse(resp)
+		if err == nil {
 			c.opt.BackoffPool.Reset()
-			return nil, err
+			return resp, nil
+		}
+		resp.Body.Close()
+		var he HTTPError
+		if errors.As(err, &he) {
+			switch he.StatusCode {
+			case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+				c.opt.BackoffPool.Delay()
+				if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+					if err1 := sleepWithTimeout(ctx, retryAfter, time.Until(max)); err1 != nil {
+						return nil, errors.Wrapf(err, "%v", err1)
+					}
+				}
+				lastErr = err
+				continue
+			}
 		}
 		c.opt.BackoffPool.Reset()
-		return resp, nil
+		return nil, err
 	}
 }
 
@@ -558,10 +561,10 @@ func parseRetryAfter(header string) (time.Duration, bool) {
 		return 0, false
 	}
 
-	secs, err := strconv.Atoi(header)
-	if err == nil {
-		if secs < 0 {
-			return 0, true
+	secs, err := strconv.ParseUint(header, 10, 64)
+	if err == nil || errors.Is(err, strconv.ErrRange) {
+		if secs > uint64(math.MaxInt64/int64(time.Second)) {
+			return time.Duration(math.MaxInt64), true
 		}
 		return time.Duration(secs) * time.Second, true
 	}
@@ -571,11 +574,7 @@ func parseRetryAfter(header string) (time.Duration, bool) {
 		return 0, false
 	}
 
-	delay := time.Until(tm)
-	if delay < 0 {
-		delay = 0
-	}
-	return delay, true
+	return max(time.Until(tm), 0), true
 }
 
 func sleepWithTimeout(ctx context.Context, delay, timeout time.Duration) error {
