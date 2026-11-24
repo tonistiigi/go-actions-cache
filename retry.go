@@ -2,6 +2,7 @@ package actionscache
 
 import (
 	"context"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -79,7 +80,7 @@ func (b *BackoffPool) trigger(t *time.Timer) {
 func (b *BackoffPool) Delay() {
 	b.mu.Lock()
 	if b.timer != nil {
-		minTime := time.Now().Add(minBackoff)
+		minTime := time.Now().Add(minBackoff / 2)
 		if b.target.Before(minTime) {
 			b.target = minTime
 			b.timer.Stop()
@@ -93,7 +94,9 @@ func (b *BackoffPool) Delay() {
 		b.backoff = minBackoff
 	}
 
-	b.target = time.Now().Add(b.backoff)
+	// Jitter the wait without changing the exponential backoff budget.
+	delay := b.backoff/2 + rand.N(b.backoff/2)
+	b.target = time.Now().Add(delay)
 	b.setupTimer()
 
 	b.mu.Unlock()
