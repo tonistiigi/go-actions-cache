@@ -21,6 +21,17 @@ func init() {
 	Log = log.Printf
 }
 
+func TestCheckResponsePlainText(t *testing.T) {
+	err := checkResponse(&http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Body:       io.NopCloser(bytes.NewBufferString("no healthy upstream")),
+	})
+	require.EqualError(t, err, "unexpected status 503: no healthy upstream")
+	var he HTTPError
+	require.ErrorAs(t, err, &he)
+	require.Equal(t, http.StatusServiceUnavailable, he.StatusCode)
+}
+
 func TestTokenScopes(t *testing.T) {
 	// this token is expired
 	noValidateToken = true

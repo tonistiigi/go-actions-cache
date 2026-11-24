@@ -775,7 +775,7 @@ func checkResponse(resp *http.Response) error {
 	}
 	var gae GithubAPIError
 	if err1 := json.Unmarshal(dt, &gae); err1 != nil {
-		err = errors.Wrapf(err1, "failed to parse error response %d: %s", resp.StatusCode, dt)
+		err = errors.Errorf("unexpected status %d: %s", resp.StatusCode, dt)
 	} else if gae.Message != "" {
 		err = errors.WithStack(gae)
 	} else {
